@@ -23,15 +23,15 @@ for package, install_cmd in REQUIRED_PACKAGES.items():
         missing_packages.append(install_cmd.split()[-1])
 
 if missing_packages:
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("❌ ERROR: Missing Required Python Dependencies!")
-    print("="*60)
+    print("=" * 60)
     print("The following packages are required but not installed on this machine:")
     for pkg in missing_packages:
         print(f"  • {pkg}")
     print("\nTo resolve this issue, please run the following installation command:")
     print(f"  pip install {' '.join(missing_packages)}")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
     sys.exit(1)
 # ----------------------------------
 
@@ -60,8 +60,10 @@ except LookupError:
 from nltk.corpus import words
 ENGLISH_WORDS = set(word.lower() for word in words.words())
 
+
 class EPUBHTMLToMarkdownParser(HTMLParser):
     """A lightweight HTML parser to convert EPUB chapter content into Markdown formatting."""
+
     def __init__(self):
         super().__init__()
         self.result = []
@@ -75,8 +77,7 @@ class EPUBHTMLToMarkdownParser(HTMLParser):
             self.style_stack.append('*')
             self.result.append('*')
         elif tag in ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div']:
-            self.result.append('
-')
+            self.result.append('\n')          # FIX: was literal newline in '...'
 
     def handle_endtag(self, tag):
         if tag in ['strong', 'b']:
@@ -94,6 +95,7 @@ class EPUBHTMLToMarkdownParser(HTMLParser):
     def get_markdown(self):
         return "".join(self.result)
 
+
 def extract_markdown_from_pdf(pdf_path):
     """Opens a PDF and extracts text, preserving bold and italic styles."""
     doc = fitz.open(pdf_path)
@@ -102,7 +104,7 @@ def extract_markdown_from_pdf(pdf_path):
     for page_num, page in enumerate(doc, start=1):
         text_page = page.get_text("dict", flags=fitz.TEXTFLAGS_SEARCH)
         page_lines = []
-        
+
         for block in text_page["blocks"]:
             if "lines" not in block:
                 continue
@@ -111,7 +113,7 @@ def extract_markdown_from_pdf(pdf_path):
                 for span in line["spans"]:
                     font_flags = span["flags"]
                     text_span = span["text"]
-                    
+
                     if not text_span.strip():
                         line_text += text_span
                         continue
@@ -126,23 +128,22 @@ def extract_markdown_from_pdf(pdf_path):
                         styled_span = f"**{styled_span}**"
                     elif is_italic:
                         styled_span = f"*{styled_span}*"
-                        
-                    if text_span.startswith(" "): styled_span = " " + styled_span
-                    if text_span.endswith(" "): styled_span = styled_span + " "
+
+                    if text_span.startswith(" "):
+                        styled_span = " " + styled_span
+                    if text_span.endswith(" "):
+                        styled_span = styled_span + " "
                     line_text += styled_span
-                
+
                 if line_text.strip():
                     page_lines.append(line_text)
-                    
+
         if page_lines:
-            page_content = "
-".join(page_lines)
-            extracted_text.append(f"--- Page {page_num} ---
-{page_content}")
+            page_content = "\n".join(page_lines)                            # FIX
+            extracted_text.append(f"--- Page {page_num} ---\n{page_content}")  # FIX
 
-    return "
+    return "\n\n".join(extracted_text)                                      # FIX
 
-".join(extracted_text)
 
 def extract_markdown_from_epub(epub_path):
     """Opens an EPUB file and extracts text, preserving basic bold and italic styles via Markdown."""
@@ -156,30 +157,30 @@ def extract_markdown_from_epub(epub_path):
             parser = EPUBHTMLToMarkdownParser()
             parser.feed(html_content)
             markdown_content = parser.get_markdown()
-            
-            if markdown_content.strip():
-                extracted_text.append(f"--- Section {item_count} ---
-{markdown_content.strip()}")
-                item_count += 1
-                
-    return "
 
-".join(extracted_text)
+            if markdown_content.strip():
+                extracted_text.append(f"--- Section {item_count} ---\n{markdown_content.strip()}")  # FIX
+                item_count += 1
+
+    return "\n\n".join(extracted_text)                                      # FIX
+
 
 def is_header_or_footer(line):
     """Identifies common book artifacts like running headers and Roman numeral strings."""
     stripped = re.sub(r'\*+', '', line).strip().lower()
     if not stripped:
         return False
-        
-    if re.search(r'[ex•\[\s]*(?:x[vlcx]*|v[ix]*|i[vx]*)[ex•\]\s]*', stripped):
-        if any(term in stripped for term in ["castxe", "castle", "dick", "life", "high", "purr", "philip"]):
+
+    if re.search(r'[ex•\[\s]*(?:x[vlcx]*|v[ix]*|i[vx]*)[ex•\]\s]*', stripped):
+        if any(term in stripped for term in ["castxe", "castle", "dick", "life",
+                                              "high", "purr", "philip"]):
             return True
-            
+
     if re.match(r'^page\s+\d+$|^\d+$', stripped):
         return True
-        
+
     return False
+
 
 def is_valid_word(word):
     clean = re.sub(r'[^\w]', '', word).lower()
@@ -190,6 +191,7 @@ def is_valid_word(word):
     if len(clean) == 1:
         return clean in ['a', 'i', 'o']
     return clean in ENGLISH_WORDS
+
 
 def check_line_quality(line, max_punctuation_ratio=0.15, min_real_word_ratio=0.45):
     clean_line = re.sub(r'\*+', '', line).strip()
@@ -214,81 +216,86 @@ def check_line_quality(line, max_punctuation_ratio=0.15, min_real_word_ratio=0.4
     tokens = clean_line.split()
     if not tokens:
         return False
-        
+
     valid_count = sum(1 for token in tokens if is_valid_word(token))
     real_word_ratio = valid_count / len(tokens)
-    
+
     return real_word_ratio >= min_real_word_ratio
+
 
 def clean_markdown_artifacts(input_txt_path):
     """Processes extracted markdown structural lines and filters noise or splits."""
     cleaned_lines = []
-    
+
     with open(input_txt_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
-        
+
     for line in lines:
         if line.strip().startswith("--- Page") or line.strip().startswith("--- Section"):
             cleaned_lines.append(line)
             continue
-            
+
         if check_line_quality(line):
             cleaned_lines.append(line)
 
     full_text = "".join(cleaned_lines)
-    full_text = re.sub(r'
-+--- Page \d+ ---
-+', r' ', full_text)
-    full_text = re.sub(r'
-+--- Section \d+ ---
-+', r' ', full_text)
+    full_text = re.sub(r'\n+--- Page \d+ ---\n+', r' ', full_text)          # FIX
+    full_text = re.sub(r'\n+--- Section \d+ ---\n+', r' ', full_text)       # FIX
 
     # --- STYLE-AWARE UN-GLUING INTERPRETER ---
     final_tokens = []
     for token in full_text.split(' '):
-        if not token.strip(): continue
-        
+        if not token.strip():
+            continue
+
         clean_word = re.sub(r'[^\w]', '', token)
-        
-        if len(clean_word) > 4 and clean_word.isalpha() and clean_word.lower() not in ENGLISH_WORDS:
+
+        if (len(clean_word) > 4
+                and clean_word.isalpha()
+                and clean_word.lower() not in ENGLISH_WORDS):
             split_pieces = wordninja.split(clean_word)
             if len(split_pieces) > 1:
                 prefix = re.match(r'^([^\w]*)', token).group(1)
                 suffix = re.search(r'([^\w]*)$', token).group(1)
-                
+
                 reconstructed = " ".join(split_pieces)
                 final_tokens.append(f"{prefix}{reconstructed}{suffix}")
                 continue
-                
+
         final_tokens.append(token)
 
     return " ".join(final_tokens)
 
+
 def convert_markdown_to_html(md_text):
     """Converts inline markdown text tags to standard XHTML tags."""
     html = md_text
-    html = re.sub(r'\*\*\*(.*?)\*\*\*', r'<strong><em></em></strong>', html)
-    html = re.sub(r'\*\*(.*?)\*\*', r'<strong></strong>', html)
-    html = re.sub(r'\*(.*?)\*', r'<em></em>', html)
-    paragraphs = html.split('
-')
+    # FIX: \1 backreferences were lost — restored
+    html = re.sub(r'\*\*\*(.*?)\*\*\*', r'<strong><em>\1</em></strong>', html)
+    html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html)
+    html = re.sub(r'\*(.*?)\*', r'<em>\1</em>', html)
+    paragraphs = html.split('\n')                                          # FIX
     return "".join(f"<p>{p.strip()}</p>" for p in paragraphs if p.strip())
+
 
 def convert_markdown_to_rtf(md_text):
     """Translates inline markdown layout nodes into explicit RTF control code words."""
     rtf_body = md_text
-    rtf_body = rtf_body.replace('{', '\{').replace('}', '\}')
-    rtf_body = rtf_body.replace('
-', '\par
-')
-    
-    rtf_body = re.sub(r'\*\*\*(.*?)\*\*\*', r'\b\i \i0\b0', rtf_body)
-    rtf_body = re.sub(r'\*\*(.*?)\*\*', r'\b \b0', rtf_body)
-    rtf_body = re.sub(r'\*(.*?)\*', r'\i \i0', rtf_body)
-    
-    rtf_header = r'{
-tf1nsi\deff0{onttbl{0swisscharset0 Arial;}}0s24 '
-    return rtf_header + rtf_body + r'}'
+    # FIX: use raw strings so \{ \} actually produce backslash-brace
+    rtf_body = rtf_body.replace('{', r'\{').replace('}', r'\}')
+    # FIX: literal newline restoration + explicit escaped backslash for \par
+    rtf_body = rtf_body.replace('\n', '\\par\n')
+
+    # FIX: \1 backreferences restored; \\b / \\i so regex produces literal RTF
+    # control words instead of backspace / invalid escapes.
+    rtf_body = re.sub(r'\*\*\*(.*?)\*\*\*', r'\\b\\i \1\\i0\\b0', rtf_body)
+    rtf_body = re.sub(r'\*\*(.*?)\*\*',     r'\\b \1\\b0',       rtf_body)
+    rtf_body = re.sub(r'\*(.*?)\*',         r'\\i \1\\i0',       rtf_body)
+
+    # FIX: RTF header was corrupted by \r, \a, \f being eaten as escapes.
+    rtf_header = r'{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss\charset0 Arial;}}\f0\fs24 '
+    return rtf_header + rtf_body + '}'
+
 
 def save_to_epub(cleaned_md, epub_output_path, title_name):
     book = epub.EpubBook()
@@ -308,8 +315,11 @@ def save_to_epub(cleaned_md, epub_output_path, title_name):
     book.add_item(epub.EpubNcx())
     epub.write_epub(str(epub_output_path), book, {})
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Extract styling from PDF or EPUB files and cleanly save to RTF and EPUB.")
+    parser = argparse.ArgumentParser(
+        description="Extract styling from PDF or EPUB files and cleanly save to RTF and EPUB."
+    )
     parser.add_argument("file_path", type=str, help="Path to the PDF or EPUB file.")
     args = parser.parse_args()
     file_path = Path(args.file_path)
@@ -320,26 +330,27 @@ def main():
 
     ext = file_path.suffix.lower()
     if ext not in ['.pdf', '.epub']:
-        print(f"❌ Error: Unsupported file format '{ext}'. Please provide a .pdf or .epub file.")
+        print(f"❌ Error: Unsupported file format '{ext}'. "
+              f"Please provide a .pdf or .epub file.")
         return
 
     print(f"⚙️ Processing {ext.upper()} file: {file_path.name}...")
-    
+
     # --- STEP 1: Extract Styled Markdown ---
     if ext == '.pdf':
         markdown_text = extract_markdown_from_pdf(file_path)
     else:
         markdown_text = extract_markdown_from_epub(file_path)
-        
+
     raw_output_path = file_path.with_name(f"{file_path.stem}_extracted.txt")
     with open(raw_output_path, "w", encoding="utf-8") as f:
         f.write(markdown_text)
     print(f"📄 Success! Raw marked text saved to: {raw_output_path.name}")
-    
+
     # --- STEP 2: Clean and Stitch Format Blocks ---
     print("🧹 Filtering gibberish while maintaining style properties...")
     cleaned_md = clean_markdown_artifacts(raw_output_path)
-    
+
     # --- STEP 3: Output Rich Text Format (RTF) Document ---
     cleaned_rtf_path = file_path.with_name(f"{file_path.stem}_cleaned.rtf")
     rtf_content = convert_markdown_to_rtf(cleaned_md)
@@ -350,8 +361,13 @@ def main():
     # --- STEP 4: Output Standard Electronic Book Package (EPUB) ---
     print("📚 Packing styled markup into structural EPUB eBook container...")
     cleaned_epub_path = file_path.with_name(f"{file_path.stem}_cleaned.epub")
-    save_to_epub(cleaned_md, cleaned_epub_path, title_name=file_path.stem.replace('_', ' ').title())
+    save_to_epub(
+        cleaned_md,
+        cleaned_epub_path,
+        title_name=file_path.stem.replace('_', ' ').title(),
+    )
     print(f"📖 Success! Cleaned EPUB version saved to: {cleaned_epub_path.name}")
+
 
 if __name__ == "__main__":
     main()
