@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 import re
 import sys
+from html.parser import HTMLParser
 
 # --- DEPENDENCY CHECKING BLOCK ---
 REQUIRED_PACKAGES = {
@@ -39,6 +40,7 @@ import fitz  # PyMuPDF
 import nltk
 import wordninja
 from ebooklib import epub
+import ebooklib
 
 # Fix for macOS SSL Certificate verification error
 try:
@@ -58,11 +60,42 @@ except LookupError:
 from nltk.corpus import words
 ENGLISH_WORDS = set(word.lower() for word in words.words())
 
+class EPUBHTMLToMarkdownParser(HTMLParser):
+    """A lightweight HTML parser to convert EPUB chapter content into Markdown formatting."""
+    def __init__(self):
+        super().__init__()
+        self.result = []
+        self.style_stack = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ['strong', 'b']:
+            self.style_stack.append('**')
+            self.result.append('**')
+        elif tag in ['em', 'i']:
+            self.style_stack.append('*')
+            self.result.append('*')
+        elif tag in ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div']:
+            self.result.append('
+')
+
+    def handle_endtag(self, tag):
+        if tag in ['strong', 'b']:
+            if self.style_stack and self.style_stack[-1] == '**':
+                self.style_stack.pop()
+                self.result.append('**')
+        elif tag in ['em', 'i']:
+            if self.style_stack and self.style_stack[-1] == '*':
+                self.style_stack.pop()
+                self.result.append('*')
+
+    def handle_data(self, data):
+        self.result.append(data)
+
+    def get_markdown(self):
+        return "".join(self.result)
+
 def extract_markdown_from_pdf(pdf_path):
-    """
-    Opens a PDF and extracts text, preserving bold and italic styles 
-    by inspecting PyMuPDF font flags and writing inline Markdown tags.
-    """
+    """Opens a PDF and extracts text, preserving bold and italic styles."""
     doc = fitz.open(pdf_path)
     extracted_text = []
 
@@ -102,10 +135,36 @@ def extract_markdown_from_pdf(pdf_path):
                     page_lines.append(line_text)
                     
         if page_lines:
-            page_content = "\n".join(page_lines)
-            extracted_text.append(f"--- Page {page_num} ---\n{page_content}")
+            page_content = "
+".join(page_lines)
+            extracted_text.append(f"--- Page {page_num} ---
+{page_content}")
 
-    return "\n\n".join(extracted_text)
+    return "
+
+".join(extracted_text)
+
+def extract_markdown_from_epub(epub_path):
+    """Opens an EPUB file and extracts text, preserving basic bold and italic styles via Markdown."""
+    book = epub.read_epub(str(epub_path))
+    extracted_text = []
+    item_count = 1
+
+    for item in book.get_items():
+        if item.get_type() == ebooklib.ITEM_DOCUMENT:
+            html_content = item.get_content().decode('utf-8', errors='ignore')
+            parser = EPUBHTMLToMarkdownParser()
+            parser.feed(html_content)
+            markdown_content = parser.get_markdown()
+            
+            if markdown_content.strip():
+                extracted_text.append(f"--- Section {item_count} ---
+{markdown_content.strip()}")
+                item_count += 1
+                
+    return "
+
+".join(extracted_text)
 
 def is_header_or_footer(line):
     """Identifies common book artifacts like running headers and Roman numeral strings."""
@@ -113,7 +172,7 @@ def is_header_or_footer(line):
     if not stripped:
         return False
         
-    if re.search(r'\b[ex•\[\s]*(?:x[vlcx]*|v[ix]*|i[vx]*)[ex•\]\s]*\b', stripped):
+    if re.search(r'[ex•\[\s]*(?:x[vlcx]*|v[ix]*|i[vx]*)[ex•\]\s]*', stripped):
         if any(term in stripped for term in ["castxe", "castle", "dick", "life", "high", "purr", "philip"]):
             return True
             
@@ -169,7 +228,7 @@ def clean_markdown_artifacts(input_txt_path):
         lines = f.readlines()
         
     for line in lines:
-        if line.strip().startswith("--- Page"):
+        if line.strip().startswith("--- Page") or line.strip().startswith("--- Section"):
             cleaned_lines.append(line)
             continue
             
@@ -177,8 +236,14 @@ def clean_markdown_artifacts(input_txt_path):
             cleaned_lines.append(line)
 
     full_text = "".join(cleaned_lines)
-    full_text = re.sub(r'\n+--- Page \d+ ---\n+', r' ', full_text)
+    full_text = re.sub(r'
++--- Page \d+ ---
++', r' ', full_text)
+    full_text = re.sub(r'
++--- Section \d+ ---
++', r' ', full_text)
 
+    # --- STYLE-AWARE UN-GLUING INTERPRETER ---
     final_tokens = []
     for token in full_text.split(' '):
         if not token.strip(): continue
@@ -202,23 +267,27 @@ def clean_markdown_artifacts(input_txt_path):
 def convert_markdown_to_html(md_text):
     """Converts inline markdown text tags to standard XHTML tags."""
     html = md_text
-    html = re.sub(r'\*\*\*(.*?)\*\*\*', r'<strong><em>\1</em></strong>', html)
-    html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html)
-    html = re.sub(r'\*(.*?)\*', r'<em>\1</em>', html)
-    paragraphs = html.split('\n')
+    html = re.sub(r'\*\*\*(.*?)\*\*\*', r'<strong><em></em></strong>', html)
+    html = re.sub(r'\*\*(.*?)\*\*', r'<strong></strong>', html)
+    html = re.sub(r'\*(.*?)\*', r'<em></em>', html)
+    paragraphs = html.split('
+')
     return "".join(f"<p>{p.strip()}</p>" for p in paragraphs if p.strip())
 
 def convert_markdown_to_rtf(md_text):
     """Translates inline markdown layout nodes into explicit RTF control code words."""
     rtf_body = md_text
-    rtf_body = rtf_body.replace('{', '\\{').replace('}', '\\}')
-    rtf_body = rtf_body.replace('\n', '\\par\n')
+    rtf_body = rtf_body.replace('{', '\{').replace('}', '\}')
+    rtf_body = rtf_body.replace('
+', '\par
+')
     
-    rtf_body = re.sub(r'\*\*\*(.*?)\*\*\*', r'\\b\\i \1\\i0\\b0', rtf_body)
-    rtf_body = re.sub(r'\*\*(.*?)\*\*', r'\\b \1\\b0', rtf_body)
-    rtf_body = re.sub(r'\*(.*?)\*', r'\\i \\i0', rtf_body)
+    rtf_body = re.sub(r'\*\*\*(.*?)\*\*\*', r'\b\i \i0\b0', rtf_body)
+    rtf_body = re.sub(r'\*\*(.*?)\*\*', r'\b \b0', rtf_body)
+    rtf_body = re.sub(r'\*(.*?)\*', r'\i \i0', rtf_body)
     
-    rtf_header = r'{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss\fcharset0 Arial;}}\f0\fs24 '
+    rtf_header = r'{
+tf1nsi\deff0{onttbl{0swisscharset0 Arial;}}0s24 '
     return rtf_header + rtf_body + r'}'
 
 def save_to_epub(cleaned_md, epub_output_path, title_name):
@@ -240,21 +309,29 @@ def save_to_epub(cleaned_md, epub_output_path, title_name):
     epub.write_epub(str(epub_output_path), book, {})
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract styling from PDF and cleanly save to RTF and EPUB.")
-    parser.add_argument("pdf_path", type=str, help="Path to the PDF file.")
+    parser = argparse.ArgumentParser(description="Extract styling from PDF or EPUB files and cleanly save to RTF and EPUB.")
+    parser.add_argument("file_path", type=str, help="Path to the PDF or EPUB file.")
     args = parser.parse_args()
-    pdf_path = Path(args.pdf_path)
+    file_path = Path(args.file_path)
 
-    if not pdf_path.is_file():
-        print(f"❌ Error: The file '{pdf_path}' does not exist.")
+    if not file_path.is_file():
+        print(f"❌ Error: The file '{file_path}' does not exist.")
         return
 
-    print(f"⚙️ Processing with PyMuPDF: {pdf_path.name}...")
+    ext = file_path.suffix.lower()
+    if ext not in ['.pdf', '.epub']:
+        print(f"❌ Error: Unsupported file format '{ext}'. Please provide a .pdf or .epub file.")
+        return
+
+    print(f"⚙️ Processing {ext.upper()} file: {file_path.name}...")
     
     # --- STEP 1: Extract Styled Markdown ---
-    markdown_text = extract_markdown_from_pdf(pdf_path)
-    raw_output_path = pdf_path.with_name(f"{pdf_path.stem}_extracted.txt")
-    
+    if ext == '.pdf':
+        markdown_text = extract_markdown_from_pdf(file_path)
+    else:
+        markdown_text = extract_markdown_from_epub(file_path)
+        
+    raw_output_path = file_path.with_name(f"{file_path.stem}_extracted.txt")
     with open(raw_output_path, "w", encoding="utf-8") as f:
         f.write(markdown_text)
     print(f"📄 Success! Raw marked text saved to: {raw_output_path.name}")
@@ -264,7 +341,7 @@ def main():
     cleaned_md = clean_markdown_artifacts(raw_output_path)
     
     # --- STEP 3: Output Rich Text Format (RTF) Document ---
-    cleaned_rtf_path = pdf_path.with_name(f"{pdf_path.stem}_cleaned.rtf")
+    cleaned_rtf_path = file_path.with_name(f"{file_path.stem}_cleaned.rtf")
     rtf_content = convert_markdown_to_rtf(cleaned_md)
     with open(cleaned_rtf_path, "w", encoding="utf-8") as f:
         f.write(rtf_content)
@@ -272,8 +349,8 @@ def main():
 
     # --- STEP 4: Output Standard Electronic Book Package (EPUB) ---
     print("📚 Packing styled markup into structural EPUB eBook container...")
-    cleaned_epub_path = pdf_path.with_name(f"{pdf_path.stem}_cleaned.epub")
-    save_to_epub(cleaned_md, cleaned_epub_path, title_name=pdf_path.stem.replace('_', ' ').title())
+    cleaned_epub_path = file_path.with_name(f"{file_path.stem}_cleaned.epub")
+    save_to_epub(cleaned_md, cleaned_epub_path, title_name=file_path.stem.replace('_', ' ').title())
     print(f"📖 Success! Cleaned EPUB version saved to: {cleaned_epub_path.name}")
 
 if __name__ == "__main__":
